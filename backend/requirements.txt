@@ -1,0 +1,30 @@
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+python-multipart>=0.0.12
+pydantic>=2.9.2
+pydantic-settings>=2.6.1
+
+# PDF loading — PyMuPDF + Tesseract OCR fallback for garbled/scanned PDFs
+PyMuPDF>=1.24.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+langchain>=0.3.7
+langchain-community>=0.3.7
+langchain-text-splitters>=0.3.0
+
+# Hybrid retrieval keyword leg
+rank-bm25>=0.2.2
+
+# Embeddings + cross-encoder reranking via ONNX (no torch needed)
+# onnxruntime is pulled in by chromadb, fastembed shares it
+fastembed>=0.4.0
+
+# Vector database
+chromadb>=0.5.20
+
+# LLM (OpenRouter — OpenAI-compatible)
+openai>=1.55.0
+
+# Streamlit fallback UI
+streamlit>=1.40.0
