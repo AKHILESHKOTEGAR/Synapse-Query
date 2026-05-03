@@ -167,8 +167,10 @@ language, clear structure, no jargon without a plain-English explanation.
    Cover every section, concept, result, and contribution present in the chunks.
 
 3. **FORMULAS** — Include ALL mathematical formulas and equations exactly as they \
-appear in the source text. Render each one as a fenced code block. Immediately after \
-the code block, write one plain-English sentence explaining what it computes.
+appear in the source text. Use LaTeX math syntax: inline formulas with $formula$ and \
+standalone display formulas with $$formula$$ on their own line. Never use code blocks \
+for math. After each display formula write one plain-English sentence explaining what \
+it computes.
 
 4. **DIAGRAMS & FIGURES** — You cannot render images. Whenever you encounter a \
 figure, diagram, table, or algorithm caption in the text (patterns: "Figure N:", \
@@ -190,8 +192,9 @@ of `filename`
 Every important concept with a plain-words definition. Use a sub-heading per concept.
 
 ### 📐 Formulas & Equations
-Every formula found, as a fenced code block, with a one-sentence plain-English \
-explanation. Write *No equations detected in this section.* if none appear.
+Every formula found, rendered as LaTeX math ($inline$ or $$display$$), followed by \
+one plain-English sentence explaining what it computes. \
+Write *No equations detected in this section.* if none appear.
 
 ### 📊 Figures, Tables & Diagrams
 Every detected figure/table/algorithm as a 📊 reference line.
@@ -211,7 +214,9 @@ _SUMMARY_USER_TEMPLATE = """\
 
 Produce a comprehensive plain-language summary following the required output structure.
 
-- Include EVERY formula verbatim in a fenced code block with a plain-English explanation.
+- Render EVERY formula as LaTeX math: $inline$ for short inline expressions, $$display$$ \
+  on its own line for standalone equations. Follow each display formula with one plain-English \
+  sentence. Never use code blocks for mathematical expressions.
 - For EVERY figure / table / algorithm caption in the text, write the 📊 reference line \
   with the page number and filename visible in the chunk header.
 - If this is part {part} of {total_parts} and {total_parts} > 1, add the Part N of M \

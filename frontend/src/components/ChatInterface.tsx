@@ -10,6 +10,8 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { AlertCircle, Brain, ChevronRight, Loader2, Send } from "lucide-react";
 import { Source, SummaryMeta, streamQuery, streamSummarize } from "@/lib/api";
 import SourceCitation from "./SourceCitation";
@@ -187,7 +189,10 @@ export default function ChatInterface({ pendingSummary, onSummaryConsumed }: Pro
                   <div className="flex-1 min-w-0">
                     {msg.content ? (
                       <div className="nexus-prose max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm, remarkMath]}
+                          rehypePlugins={[rehypeKatex]}
+                        >
                           {msg.content}
                         </ReactMarkdown>
                         {msg.streaming && (
