@@ -12,6 +12,7 @@ POST /query    — two-stage RAG query, SSE streaming response
 import asyncio
 import json
 import logging
+import os
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -114,9 +115,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

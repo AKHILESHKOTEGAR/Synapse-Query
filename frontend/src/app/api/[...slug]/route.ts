@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 
+export const maxDuration = 60; // seconds — required for LLM streaming on Vercel
+
 const BACKEND = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function proxy(req: NextRequest, slug: string[]) {
