@@ -2,23 +2,115 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Smooth scrollbar for dark theme */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ── Scrollbar ─────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* ── Textarea ───────────────────────────────────────────────────── */
+textarea { field-sizing: content; }
+
+/* ── Prose — chat markdown rendering ───────────────────────────── */
+.nexus-prose { font-size: 0.8125rem; line-height: 1.7; color: rgb(209 213 219); }
+
+.nexus-prose h1,.nexus-prose h2,.nexus-prose h3 {
+  color: white; font-weight: 600; margin: 1rem 0 0.4rem;
+  letter-spacing: -0.01em;
 }
-::-webkit-scrollbar-track {
-  background: #111827;
+.nexus-prose h3 { font-size: 0.875rem; color: rgb(229 231 235); }
+
+.nexus-prose p { margin: 0.4rem 0; }
+
+.nexus-prose ul,.nexus-prose ol {
+  padding-left: 1.25rem; margin: 0.5rem 0; space-y: 0.25rem;
 }
-::-webkit-scrollbar-thumb {
-  background: #374151;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+.nexus-prose ul { list-style-type: disc; }
+.nexus-prose ol { list-style-type: decimal; }
+.nexus-prose li { margin: 0.2rem 0; }
+.nexus-prose li > ul, .nexus-prose li > ol { margin: 0.2rem 0; }
+
+.nexus-prose strong { color: rgb(243 244 246); font-weight: 600; }
+.nexus-prose em { color: rgb(209 213 219); font-style: italic; }
+
+.nexus-prose code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+  background: rgba(59 130 246 / 0.12);
+  color: rgb(147 197 253);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  border: 1px solid rgba(59 130 246 / 0.18);
 }
 
-/* Textarea auto-resize feel */
-textarea {
-  field-sizing: content;
+.nexus-prose pre {
+  background: rgba(0 0 0 / 0.4);
+  border: 1px solid rgba(255 255 255 / 0.06);
+  border-radius: 8px;
+  padding: 0.875rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.nexus-prose pre code {
+  background: none; border: none; padding: 0;
+  color: rgb(229 231 235); font-size: 0.78rem;
+}
+
+.nexus-prose blockquote {
+  border-left: 3px solid rgba(59 130 246 / 0.5);
+  padding: 0.4rem 0 0.4rem 1rem;
+  margin: 0.5rem 0;
+  color: rgb(156 163 175);
+  background: rgba(59 130 246 / 0.04);
+  border-radius: 0 6px 6px 0;
+}
+
+/* Tables — critical for structured extraction */
+.nexus-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.775rem;
+  margin: 0.75rem 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255 255 255 / 0.07);
+}
+.nexus-prose thead {
+  background: rgba(59 130 246 / 0.12);
+}
+.nexus-prose th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  color: rgb(147 197 253);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid rgba(59 130 246 / 0.2);
+  border-right: 1px solid rgba(255 255 255 / 0.05);
+}
+.nexus-prose th:last-child { border-right: none; }
+.nexus-prose td {
+  padding: 0.425rem 0.75rem;
+  border-bottom: 1px solid rgba(255 255 255 / 0.05);
+  border-right: 1px solid rgba(255 255 255 / 0.04);
+  vertical-align: top;
+  color: rgb(209 213 219);
+}
+.nexus-prose td:last-child { border-right: none; }
+.nexus-prose tr:last-child td { border-bottom: none; }
+.nexus-prose tbody tr:hover td {
+  background: rgba(255 255 255 / 0.025);
+}
+
+.nexus-prose a {
+  color: rgb(96 165 250);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.nexus-prose hr {
+  border: none;
+  border-top: 1px solid rgba(255 255 255 / 0.06);
+  margin: 1rem 0;
 }

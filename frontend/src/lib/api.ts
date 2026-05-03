@@ -1,7 +1,7 @@
 const BASE =
   typeof window !== "undefined"
-    ? "/api" // client-side: go through Next.js rewrite proxy
-    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"); // SSR
+    ? "/api"
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
 
 export interface Source {
   text: string;
@@ -28,8 +28,14 @@ export interface HealthResult {
   collection_name: string;
 }
 
+export interface DocumentDetail {
+  name: string;
+  chunks: number;
+}
+
 export interface DocumentsResult {
   documents: string[];
+  document_details: DocumentDetail[];
   count: number;
   total_chunks: number;
 }
@@ -48,11 +54,25 @@ export async function uploadPDF(file: File): Promise<UploadResult> {
   return res.json();
 }
 
+export async function resetAll(): Promise<void> {
+  const res = await fetch(`${BASE}/reset`, { method: "POST" });
+  if (!res.ok) throw new Error("Reset failed");
+}
+
+export async function deleteDocument(filename: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/documents/${encodeURIComponent(filename)}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Delete failed" }));
+    throw new Error(err.detail ?? "Delete failed");
+  }
+}
+
 /**
  * Stream a RAG query.
- *
- * Yields answer tokens; calls `onSources` once with citation data as soon
- * as the backend emits the sources SSE event (before the first token).
+ * Yields answer tokens; calls `onSources` once with citation data.
  */
 export async function* streamQuery(
   query: string,

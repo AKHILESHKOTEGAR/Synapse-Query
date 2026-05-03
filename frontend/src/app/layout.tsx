@@ -5,9 +5,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "RAG System — Intelligent Document Q&A",
+  title: "Nexus — Technical Document Intelligence",
   description:
-    "Two-stage retrieval: bi-encoder vector search + cross-encoder re-ranking + Claude generation",
+    "Two-stage hybrid retrieval: BM25 + vector search · cross-encoder re-ranking · Nemotron grounded generation",
 };
 
 export default function RootLayout({

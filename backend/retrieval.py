@@ -188,6 +188,17 @@ class HybridRetriever:
     # Public API
     # ------------------------------------------------------------------
 
+    def get_reference_chunks(self, source: str) -> list[dict[str, Any]]:
+        """Return all reference-list chunks for a given source file."""
+        result = self.collection.get(
+            where={"$and": [{"source": {"$eq": source}}, {"is_references": {"$eq": 1}}]},
+            include=["documents", "metadatas"],
+        )
+        return [
+            {"text": doc, "metadata": meta}
+            for doc, meta in zip(result["documents"], result["metadatas"])
+        ]
+
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         """
         Hybrid retrieve: vector ∪ BM25 fused via RRF → top_k candidates.

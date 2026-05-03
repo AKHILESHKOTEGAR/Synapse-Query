@@ -9,6 +9,7 @@ POST /upload   — ingest a PDF (multipart/form-data)
 POST /query    — two-stage RAG query, SSE streaming response
 """
 
+import asyncio
 import json
 import logging
 import shutil
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 
 from config import settings
 from ingestion import DocumentIngestionPipeline
+from knowledge import KnowledgeStore
 from llm import LLMGenerator
 from reranker import CrossEncoderReranker
 from retrieval import HybridRetriever
@@ -41,12 +43,39 @@ _pipeline: Optional[DocumentIngestionPipeline] = None
 _retriever: Optional[HybridRetriever] = None
 _reranker: Optional[CrossEncoderReranker] = None
 _generator: Optional[LLMGenerator] = None
+_knowledge: Optional[KnowledgeStore] = None
+_ingest_lock = asyncio.Lock()  # prevents concurrent OCR from corrupting Tesseract state
+
+
+def _wipe_all() -> None:
+    """Delete all indexed documents, knowledge entries, and uploaded files."""
+    import chromadb
+    from chromadb.config import Settings as ChromaSettings
+
+    client = chromadb.PersistentClient(
+        path=settings.CHROMA_PERSIST_DIR,
+        settings=ChromaSettings(anonymized_telemetry=False),
+    )
+    for name in [settings.CHROMA_COLLECTION_NAME, settings.KNOWLEDGE_COLLECTION_NAME]:
+        try:
+            client.delete_collection(name)
+            logger.info("Wiped collection: %s", name)
+        except Exception:
+            pass
+
+    upload_dir = Path(settings.UPLOAD_DIR)
+    for f in upload_dir.glob("*.pdf"):
+        f.unlink()
+    logger.info("Cleared uploads directory")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load all models once at startup; release on shutdown."""
-    global _pipeline, _retriever, _reranker, _generator
+    """Load all models once at startup; wipe state for a fresh session."""
+    global _pipeline, _retriever, _reranker, _generator, _knowledge
+
+    logger.info("=== Wiping previous session data ===")
+    _wipe_all()
 
     logger.info("=== Loading ingestion pipeline ===")
     _pipeline = DocumentIngestionPipeline()
@@ -68,6 +97,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("=== Loading LLM generator ===")
     _generator = LLMGenerator()
+
+    logger.info("=== Loading adaptive knowledge store ===")
+    _knowledge = KnowledgeStore()
 
     logger.info("=== Startup complete ===")
     yield
@@ -139,12 +171,76 @@ async def health():
 @app.get("/documents")
 async def list_documents():
     pipeline = get_pipeline()
-    files = sorted(Path(settings.UPLOAD_DIR).glob("*.pdf"))
+    result = pipeline.collection.get(include=["metadatas"])
+
+    source_chunks: dict[str, int] = {}
+    for meta in result["metadatas"]:
+        src = meta.get("source", "unknown")
+        source_chunks[src] = source_chunks.get(src, 0) + 1
+
+    doc_details = [
+        {"name": name, "chunks": chunks}
+        for name, chunks in sorted(source_chunks.items())
+    ]
     return {
-        "documents": [f.name for f in files],
-        "count": len(files),
-        **pipeline.get_stats(),
+        "documents": list(source_chunks.keys()),
+        "document_details": doc_details,
+        "count": len(doc_details),
+        "total_chunks": pipeline.collection.count(),
+        "collection_name": settings.CHROMA_COLLECTION_NAME,
     }
+
+
+@app.post("/reset")
+async def reset_all():
+    """Wipe all indexed documents, knowledge store, and uploads — fresh start."""
+    pipeline = get_pipeline()
+    retriever = get_retriever()
+
+    # Clear main collection
+    all_ids = pipeline.collection.get()["ids"]
+    if all_ids:
+        pipeline.collection.delete(ids=all_ids)
+
+    # Clear knowledge store
+    if _knowledge is not None:
+        all_k = _knowledge.collection.get()["ids"]
+        if all_k:
+            _knowledge.collection.delete(ids=all_k)
+
+    # Clear uploads
+    for f in Path(settings.UPLOAD_DIR).glob("*.pdf"):
+        f.unlink()
+
+    retriever.invalidate_bm25()
+    logger.info("Reset: all data wiped")
+    return {"message": "Reset complete"}
+
+
+@app.delete("/documents/{filename}")
+async def delete_document(filename: str):
+    """Remove a PDF and all its indexed chunks from the system."""
+    pipeline = get_pipeline()
+    retriever = get_retriever()
+
+    existing = pipeline.collection.get(where={"source": {"$eq": filename}})
+    if not existing["ids"]:
+        raise HTTPException(status_code=404, detail=f"'{filename}' not found in index")
+
+    chunks_removed = len(existing["ids"])
+    pipeline.collection.delete(ids=existing["ids"])
+
+    if _knowledge is not None:
+        _knowledge.delete_source(filename)
+
+    file_path = Path(settings.UPLOAD_DIR) / filename
+    if file_path.exists():
+        file_path.unlink()
+
+    retriever.invalidate_bm25()
+
+    logger.info("Deleted '%s' — %d chunks removed", filename, chunks_removed)
+    return {"message": f"Deleted '{filename}'", "chunks_removed": chunks_removed}
 
 
 @app.post("/upload")
@@ -172,7 +268,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         dest.write_bytes(content)
         logger.info("Saved upload: %s (%d bytes)", file.filename, len(content))
 
-        result = pipeline.ingest(str(dest))
+        async with _ingest_lock:
+            result = await asyncio.to_thread(pipeline.ingest, str(dest))
 
         # Invalidate the BM25 index so the new chunks are included on next query
         retriever = get_retriever()
@@ -202,13 +299,27 @@ async def query(request: QueryRequest):
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    # Stage 1 — dense retrieval
+    # Stage 1 — hybrid retrieval
     candidates = retriever.retrieve(request.query, top_k=request.top_k_retrieval)
     if not candidates:
         raise HTTPException(
             status_code=404,
             detail="No documents indexed. Upload PDFs first.",
         )
+
+    # Stage 1b — inject recalled chunks from past interactions (self-improving)
+    if _knowledge is not None:
+        recalled = _knowledge.recall(request.query)
+        if recalled:
+            seen = {
+                f"{c['metadata']['source']}::{c['text'][:80]}"
+                for c in candidates
+            }
+            for rc in recalled:
+                key = f"{rc['metadata']['source']}::{rc['text'][:80]}"
+                if key not in seen:
+                    candidates.append(rc)
+                    seen.add(key)
 
     # Stage 2 — cross-encoder re-ranking (graceful fallback to top-K from Stage 1)
     if _reranker is not None:
@@ -233,13 +344,25 @@ async def query(request: QueryRequest):
         for c in top_chunks
     ]
 
+    # Collect reference-list chunks for every source file in the top results
+    source_files = {c["metadata"]["source"] for c in top_chunks}
+    ref_chunks: list[dict] = []
+    for src_file in source_files:
+        ref_chunks.extend(retriever.get_reference_chunks(src_file))
+
     async def event_stream():
         yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
 
-        async for token in generator.stream(request.query, top_chunks):
+        async for token in generator.stream(request.query, top_chunks, ref_chunks):
             yield f"data: {json.dumps({'type': 'token', 'data': token})}\n\n"
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        # Store this interaction for future retrieval improvement (background)
+        if _knowledge is not None:
+            asyncio.create_task(
+                asyncio.to_thread(_knowledge.store, request.query, top_chunks)
+            )
 
     return StreamingResponse(
         event_stream(),

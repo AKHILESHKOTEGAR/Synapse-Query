@@ -2,21 +2,17 @@
 
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import {
-  Upload,
-  FileText,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-} from "lucide-react";
-import { uploadPDF, UploadResult } from "@/lib/api";
+import { Upload, CheckCircle2, XCircle, Loader2, X } from "lucide-react";
+import { deleteDocument, uploadPDF, UploadResult } from "@/lib/api";
 
-type Status = "idle" | "uploading" | "success" | "error";
+type FileStatus = "uploading" | "done" | "error";
 
-interface UploadState {
-  status: Status;
-  message?: string;
+interface FileState {
+  id: string;
+  name: string;
+  status: FileStatus;
   result?: UploadResult;
+  error?: string;
 }
 
 interface Props {
@@ -24,115 +20,144 @@ interface Props {
 }
 
 export default function UploadZone({ onIngested }: Props) {
-  const [state, setState] = useState<UploadState>({ status: "idle" });
-  const [history, setHistory] = useState<string[]>([]);
+  const [files, setFiles] = useState<FileState[]>([]);
 
   const onDrop = useCallback(
     async (accepted: File[]) => {
-      const file = accepted[0];
-      if (!file) return;
+      if (!accepted.length) return;
 
-      setState({ status: "uploading", message: `Ingesting ${file.name}…` });
+      const entries: FileState[] = accepted.map((f) => ({
+        id: `${f.name}-${f.size}-${Date.now()}`,
+        name: f.name,
+        status: "uploading",
+      }));
+      setFiles((prev) => [...entries, ...prev]);
 
-      try {
-        const result = await uploadPDF(file);
-        setState({ status: "success", result, message: result.message });
-        setHistory((h) => [file.name, ...h.filter((n) => n !== file.name)]);
-        onIngested?.();
-      } catch (err) {
-        setState({
-          status: "error",
-          message: err instanceof Error ? err.message : "Upload failed",
-        });
-      }
+      await Promise.allSettled(
+        accepted.map(async (f, i) => {
+          const id = entries[i].id;
+          try {
+            const result = await uploadPDF(f);
+            setFiles((prev) =>
+              prev.map((s) => (s.id === id ? { ...s, status: "done", result } : s))
+            );
+            onIngested?.();
+          } catch (err) {
+            setFiles((prev) =>
+              prev.map((s) =>
+                s.id === id
+                  ? { ...s, status: "error", error: err instanceof Error ? err.message : "Upload failed" }
+                  : s
+              )
+            );
+          }
+        })
+      );
     },
     [onIngested]
   );
 
+  const handleRemove = async (id: string, name: string, isDone: boolean) => {
+    if (isDone) {
+      try {
+        await deleteDocument(name);
+        onIngested?.();
+      } catch {
+        // may already be gone — still remove from list
+      }
+    }
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const busy = files.some((f) => f.status === "uploading");
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { "application/pdf": [".pdf"] },
-    maxFiles: 1,
-    disabled: state.status === "uploading",
+    multiple: true,
+    disabled: busy,
   });
 
-  const statusStyles: Record<Status, string> = {
-    idle: "",
-    uploading: "bg-blue-950/40 border-blue-700 text-blue-300",
-    success: "bg-green-950/40 border-green-700 text-green-300",
-    error: "bg-red-950/40 border-red-700 text-red-300",
-  };
-
   return (
-    <div className="space-y-3">
-      {/* Drop zone */}
+    <div className="space-y-2">
       <div
         {...getRootProps()}
         className={[
-          "border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-150 select-none",
+          "relative border-2 border-dashed rounded-xl p-5 text-center cursor-pointer select-none",
+          "transition-all duration-200",
           isDragActive
-            ? "border-blue-500 bg-blue-950/20"
-            : "border-gray-700 hover:border-gray-500 hover:bg-gray-800/30",
-          state.status === "uploading" ? "pointer-events-none opacity-60" : "",
+            ? "border-blue-500/70 bg-blue-500/5 scale-[1.01]"
+            : "border-white/[0.07] hover:border-white/[0.14] hover:bg-white/[0.02]",
+          busy ? "pointer-events-none opacity-50" : "",
         ].join(" ")}
       >
         <input {...getInputProps()} />
         <div className="flex flex-col items-center gap-2">
-          {state.status === "uploading" ? (
-            <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+          {busy ? (
+            <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+            </div>
           ) : (
-            <Upload
-              className={`w-8 h-8 ${
-                isDragActive ? "text-blue-400" : "text-gray-500"
-              }`}
-            />
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+              isDragActive ? "bg-blue-500/20" : "bg-white/[0.04]"
+            }`}>
+              <Upload className={`w-4 h-4 ${isDragActive ? "text-blue-400" : "text-gray-500"}`} />
+            </div>
           )}
-          <p className="text-sm font-medium text-gray-300">
-            {isDragActive ? "Drop PDF here" : "Drag & drop PDF"}
-          </p>
-          <p className="text-xs text-gray-600">or click to browse · max 50 MB</p>
+          <div>
+            <p className="text-xs font-medium text-gray-300">
+              {isDragActive ? "Release to upload" : "Drop PDFs here"}
+            </p>
+            <p className="text-[10px] text-gray-600 mt-0.5">
+              Multiple files · up to 50 MB each
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Status */}
-      {state.status !== "idle" && (
-        <div
-          className={`flex items-start gap-2 p-3 rounded-lg border text-xs ${statusStyles[state.status]}`}
-        >
-          {state.status === "uploading" && (
-            <Loader2 className="w-3.5 h-3.5 mt-0.5 shrink-0 animate-spin" />
-          )}
-          {state.status === "success" && (
-            <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          )}
-          {state.status === "error" && (
-            <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          )}
-          <div className="space-y-0.5">
-            <p>{state.message}</p>
-            {state.result && (
-              <p className="opacity-70">
-                {state.result.pages_processed} pages →{" "}
-                {state.result.chunks_stored} chunks indexed
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Ingested files */}
-      {history.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Ingested
-          </p>
-          {history.map((name) => (
+      {/* Per-file rows */}
+      {files.length > 0 && (
+        <div className="space-y-1 max-h-52 overflow-y-auto">
+          {files.map((f) => (
             <div
-              key={name}
-              className="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2"
+              key={f.id}
+              className={[
+                "group flex items-center gap-2.5 px-3 py-2 rounded-lg border text-[11px] transition-all",
+                f.status === "uploading" && "bg-blue-500/5 border-blue-500/15 text-blue-300",
+                f.status === "done"    && "bg-emerald-500/5 border-emerald-500/15 text-emerald-300",
+                f.status === "error"   && "bg-red-500/5 border-red-500/15 text-red-300",
+              ].filter(Boolean).join(" ")}
             >
-              <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-              <span className="text-xs text-gray-300 truncate">{name}</span>
+              <span className="shrink-0">
+                {f.status === "uploading" && <Loader2 className="w-3 h-3 animate-spin" />}
+                {f.status === "done"    && <CheckCircle2 className="w-3 h-3" />}
+                {f.status === "error"   && <XCircle className="w-3 h-3" />}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <p className="font-medium truncate">{f.name}</p>
+                <p className="opacity-60 mt-0.5">
+                  {f.status === "uploading" && "Processing…"}
+                  {f.status === "done" && f.result && `${f.result.pages_processed} pages · ${f.result.chunks_stored} chunks indexed`}
+                  {f.status === "error" && f.error}
+                </p>
+              </div>
+
+              {/* Remove / delete button */}
+              {f.status !== "uploading" && (
+                <button
+                  onClick={() => handleRemove(f.id, f.name, f.status === "done")}
+                  className={[
+                    "shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 transition-all",
+                    f.status === "done"
+                      ? "text-gray-500 hover:text-red-400 hover:bg-red-500/10"
+                      : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
+                  ].join(" ")}
+                  title={f.status === "done" ? "Remove from library" : "Dismiss"}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -243,6 +243,11 @@ class DocumentIngestionPipeline:
         texts = [c.page_content for c in chunks]
         return [v.tolist() for v in self.embedding_model.embed(texts)]
 
+    @staticmethod
+    def _is_reference_chunk(text: str) -> bool:
+        """True if this chunk looks like a numbered reference list ([1], [2], ...)."""
+        return len(re.findall(r"^\s*\[\d+\]", text, re.MULTILINE)) >= 3
+
     def _store(
         self,
         chunks: list[Document],
@@ -260,6 +265,7 @@ class DocumentIngestionPipeline:
                 "chunk_index": i,
                 "chunk_size": len(chunk.page_content),
                 "extraction": chunk.metadata.get("extraction", "direct"),
+                "is_references": 1 if self._is_reference_chunk(chunk.page_content) else 0,
             })
 
         # Delete all existing chunks for this source before upserting to prevent
