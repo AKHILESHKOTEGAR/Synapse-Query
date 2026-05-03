@@ -117,6 +117,59 @@ export async function* streamQuery(
   }
 }
 
+export interface SummaryMeta {
+  part: number;
+  total_parts: number;
+  total_chunks: number;
+  sources: string[];
+  source_label: string;
+}
+
+/**
+ * Stream a plain-language summary for the given source(s).
+ * Calls `onMeta` once with partition info, then yields tokens.
+ */
+export async function* streamSummarize(
+  sources: string[],
+  part: number,
+  onMeta: (m: SummaryMeta) => void
+): AsyncGenerator<string> {
+  const res = await fetch(`${BASE}/summarize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sources, part }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Summarize failed" }));
+    throw new Error(err.detail ?? "Summarize failed");
+  }
+
+  const reader = res.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        type: "meta" | "token" | "done" | "error";
+        data?: unknown;
+      };
+      if (payload.type === "meta") onMeta(payload.data as SummaryMeta);
+      else if (payload.type === "token") yield payload.data as string;
+      else if (payload.type === "error") throw new Error((payload.data as string) ?? "Summary failed");
+    }
+  }
+}
+
 export async function getHealth(): Promise<HealthResult> {
   const res = await fetch(`${BASE}/health`);
   return res.json();

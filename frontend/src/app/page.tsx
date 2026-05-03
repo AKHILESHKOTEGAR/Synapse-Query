@@ -10,13 +10,14 @@ import {
   GitMerge,
   Layers,
   RotateCcw,
+  ScrollText,
   Search,
   Sparkles,
   Trash2,
   Zap,
 } from "lucide-react";
 import UploadZone from "@/components/UploadZone";
-import ChatInterface from "@/components/ChatInterface";
+import ChatInterface, { SummaryTrigger } from "@/components/ChatInterface";
 import { deleteDocument, DocumentDetail, getDocuments, getHealth, resetAll } from "@/lib/api";
 
 interface Stats {
@@ -57,6 +58,7 @@ export default function Page() {
   const [deletingDoc, setDeletingDoc] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [pipelineOpen, setPipelineOpen] = useState(true);
+  const [pendingSummary, setPendingSummary] = useState<SummaryTrigger | null>(null);
 
   const refreshAll = useCallback(() => {
     getHealth()
@@ -198,12 +200,30 @@ export default function Page() {
               <>
                 <Divider />
                 <section>
-                  <SectionLabel>
-                    Library
-                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 text-[9px] font-semibold">
-                      {docs.length}
-                    </span>
-                  </SectionLabel>
+                  <div className="flex items-center justify-between">
+                    <SectionLabel>
+                      Library
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 text-[9px] font-semibold">
+                        {docs.length}
+                      </span>
+                    </SectionLabel>
+                    {docs.length > 1 && (
+                      <button
+                        onClick={() =>
+                          setPendingSummary({
+                            sources: docs.map((d) => d.name),
+                            label: `${docs.length} documents`,
+                          })
+                        }
+                        disabled={!!pendingSummary}
+                        className="flex items-center gap-1 text-[9px] font-semibold text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-40 uppercase tracking-wide"
+                        title="Summarise all documents"
+                      >
+                        <ScrollText className="w-3 h-3" />
+                        All
+                      </button>
+                    )}
+                  </div>
                   <div className="mt-2.5 space-y-1">
                     {docs.map((doc) => (
                       <div
@@ -219,6 +239,18 @@ export default function Page() {
                             {doc.chunks} chunks
                           </p>
                         </div>
+                        {/* Summarise button */}
+                        <button
+                          onClick={() =>
+                            setPendingSummary({ sources: [doc.name], label: doc.name })
+                          }
+                          disabled={!!pendingSummary}
+                          className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 text-gray-600 hover:text-blue-400 hover:bg-blue-950/40 transition-all disabled:opacity-40"
+                          title={`Summarise ${doc.name}`}
+                        >
+                          <ScrollText className="w-3 h-3" />
+                        </button>
+                        {/* Delete button */}
                         <button
                           onClick={() => handleDelete(doc.name)}
                           disabled={deletingDoc === doc.name}
@@ -257,7 +289,10 @@ export default function Page() {
 
         {/* ── Chat ── */}
         <main className="flex-1 min-w-0 bg-[#0a0a0f]">
-          <ChatInterface />
+          <ChatInterface
+            pendingSummary={pendingSummary}
+            onSummaryConsumed={() => setPendingSummary(null)}
+          />
         </main>
       </div>
     </div>

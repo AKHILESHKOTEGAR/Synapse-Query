@@ -1,13 +1,9 @@
 """
 Stage 3 — Grounded answer generation via Nemotron Super on OpenRouter.
 
-OpenRouter exposes an OpenAI-compatible API at https://openrouter.ai/api/v1.
-We pass HTTP-Referer and X-Title headers as required by OpenRouter's terms.
-
-Only the top-3 re-ranked chunks are forwarded to the LLM.  The system
-prompt positions the model as a Technical Auditor — forcing structured
-Markdown output, multi-tier logic extraction, mandatory citation, and
-inline-reference resolution against the paper's reference list.
+Two modes:
+  • RAG mode   — Technical Auditor: structured extraction, citations, tables.
+  • Summary mode — Plain-language explainer: simple words, formulas, figure refs.
 """
 
 import logging
@@ -153,6 +149,78 @@ If no inline citations appear in the sources, omit this section entirely.
 Respond using the Technical Auditor structure defined in your system prompt.\
 """
 
+# ---------------------------------------------------------------------------
+# Plain-language summariser prompts
+# ---------------------------------------------------------------------------
+
+_SUMMARY_SYSTEM_PROMPT = """\
+You are **Nexus Summarizer** — an expert at making complex technical and scientific \
+documents understandable to anyone. You explain like a brilliant teacher: simple \
+language, clear structure, no jargon without a plain-English explanation.
+
+## Core Rules
+
+1. **SIMPLE ENGLISH** — Write as if explaining to a smart high-schooler.
+   Define every technical term in plain words the first time it appears.
+
+2. **COMPLETE COVERAGE** — Do not skip anything important.
+   Cover every section, concept, result, and contribution present in the chunks.
+
+3. **FORMULAS** — Include ALL mathematical formulas and equations exactly as they \
+appear in the source text. Render each one as a fenced code block. Immediately after \
+the code block, write one plain-English sentence explaining what it computes.
+
+4. **DIAGRAMS & FIGURES** — You cannot render images. Whenever you encounter a \
+figure, diagram, table, or algorithm caption in the text (patterns: "Figure N:", \
+"Fig. N.", "Table N:", "Algorithm N:", "Diagram N:"), write this exact reference line:
+   > 📊 **[Figure N / Table N / Algorithm N]** — *caption text if available* · Page X \
+of `filename`
+
+5. **PART BANNER** — If this is part N of M (M > 1), open with:
+   > 📄 **Part N of M** — covering pages X–Y of `filename`
+   And close with:
+   > ➡️ **Continue with Part N+1** to summarise the remaining content.
+
+## Required Output Structure
+
+### 🔍 What This Document Is About
+2–3 sentences — the big picture, in plain English.
+
+### 🧠 Key Concepts (Simply Explained)
+Every important concept with a plain-words definition. Use a sub-heading per concept.
+
+### 📐 Formulas & Equations
+Every formula found, as a fenced code block, with a one-sentence plain-English \
+explanation. Write *No equations detected in this section.* if none appear.
+
+### 📊 Figures, Tables & Diagrams
+Every detected figure/table/algorithm as a 📊 reference line.
+Write *No figure or table captions detected in this section.* if none appear.
+
+### 📈 Results & Findings
+What was discovered, proved, built, or measured — numbers verbatim.
+
+### 💡 Why This Matters
+Real-world significance, 3–5 sentences, plain English.\
+"""
+
+_SUMMARY_USER_TEMPLATE = """\
+<document_chunks source="{source_label}" part="{part}" of="{total_parts}">
+{context}
+</document_chunks>
+
+Produce a comprehensive plain-language summary following the required output structure.
+
+- Include EVERY formula verbatim in a fenced code block with a plain-English explanation.
+- For EVERY figure / table / algorithm caption in the text, write the 📊 reference line \
+  with the page number and filename visible in the chunk header.
+- If this is part {part} of {total_parts} and {total_parts} > 1, add the Part N of M \
+  banner at the top and the continuation prompt at the bottom.
+- Keep language simple — explain every technical term when first introduced.\
+"""
+
+# ---------------------------------------------------------------------------
+
 _OPENROUTER_HEADERS = {
     "HTTP-Referer": "http://localhost:3000",
     "X-Title": "Nexus RAG - Technical Auditor",
@@ -190,6 +258,17 @@ class LLMGenerator:
                 f"Re-rank: {rerank:.3f} | Extraction: {extraction}"
             )
             parts.append(f"{header}\n{chunk['text']}")
+        return "\n\n---\n\n".join(parts)
+
+    def _build_summary_context(self, chunks: list[dict[str, Any]]) -> str:
+        """Format chunks for summary — page headers + text truncated to keep context fast."""
+        parts = []
+        for chunk in chunks:
+            meta = chunk["metadata"]
+            src = meta.get("source", "unknown")
+            page = meta.get("page", 0) + 1
+            text = chunk["text"][:450]  # keep context token count manageable
+            parts.append(f"[Page {page} | {src}]\n{text}")
         return "\n\n---\n\n".join(parts)
 
     def _build_reference_block(self, ref_chunks: list[dict[str, Any]]) -> str:
@@ -260,6 +339,41 @@ class LLMGenerator:
             stream=True,
         )
         for chunk in response:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    # ------------------------------------------------------------------
+    # Summary streaming — plain-language mode
+    # ------------------------------------------------------------------
+
+    async def stream_summary(
+        self,
+        chunks: list[dict[str, Any]],
+        part: int,
+        total_parts: int,
+        source_label: str,
+    ) -> AsyncGenerator[str, None]:
+        context = self._build_summary_context(chunks)
+        messages = [
+            {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": _SUMMARY_USER_TEMPLATE.format(
+                    context=context,
+                    source_label=source_label,
+                    part=part,
+                    total_parts=total_parts,
+                ),
+            },
+        ]
+        response = await self._async_client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            max_tokens=settings.LLM_MAX_TOKENS,
+            stream=True,
+        )
+        async for chunk in response:
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta

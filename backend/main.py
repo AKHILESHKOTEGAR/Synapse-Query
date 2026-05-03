@@ -147,10 +147,18 @@ def get_generator() -> LLMGenerator:
 # Request / response schemas
 # ---------------------------------------------------------------------------
 
+SUMMARY_MAX_CHUNKS_PER_PART = 30  # ~4K tokens of context per part — keeps LLM fast
+
+
 class QueryRequest(BaseModel):
     query: str
     top_k_retrieval: int = settings.TOP_K_RETRIEVAL
     top_k_rerank: int = settings.TOP_K_RERANK
+
+
+class SummarizeRequest(BaseModel):
+    sources: list[str]  # filenames to summarise; empty list = all documents
+    part: int = 1       # which part to generate (1-indexed)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +290,85 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as exc:
         logger.exception("Ingestion failed for %s", file.filename)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/summarize")
+async def summarize_documents(request: SummarizeRequest):
+    """
+    Fetch ALL chunks for the requested source(s) ordered by page and stream
+    a plain-language summary.  If the document is large, splits into parts
+    and tells the client how many parts exist so it can request the next one.
+    """
+    pipeline = get_pipeline()
+    generator = get_generator()
+
+    # Resolve which sources to summarise
+    if not request.sources:
+        all_meta = await asyncio.to_thread(
+            pipeline.collection.get, include=["metadatas"]
+        )
+        sources = sorted({m["source"] for m in all_meta["metadatas"]})
+    else:
+        sources = request.sources
+
+    if not sources:
+        raise HTTPException(status_code=404, detail="No documents uploaded yet.")
+
+    # Fetch all chunks for each source — run in thread to avoid blocking event loop
+    def _fetch_all_chunks() -> list[dict]:
+        chunks: list[dict] = []
+        for src in sources:
+            result = pipeline.collection.get(
+                where={"source": {"$eq": src}},
+                include=["documents", "metadatas"],
+            )
+            for doc, meta in zip(result["documents"], result["metadatas"]):
+                chunks.append({"text": doc, "metadata": meta})
+        return chunks
+
+    all_chunks = await asyncio.to_thread(_fetch_all_chunks)
+
+    if not all_chunks:
+        raise HTTPException(status_code=404, detail="No indexed chunks found for the selected documents.")
+
+    # Sort by (source, page) so the LLM reads in reading order
+    all_chunks.sort(key=lambda c: (c["metadata"].get("source", ""), c["metadata"].get("page", 0)))
+
+    total_chunks = len(all_chunks)
+    total_parts = max(1, (total_chunks + SUMMARY_MAX_CHUNKS_PER_PART - 1) // SUMMARY_MAX_CHUNKS_PER_PART)
+    part = max(1, min(request.part, total_parts))
+
+    start = (part - 1) * SUMMARY_MAX_CHUNKS_PER_PART
+    end = start + SUMMARY_MAX_CHUNKS_PER_PART
+    chunks_for_part = all_chunks[start:end]
+
+    source_label = (
+        sources[0] if len(sources) == 1
+        else ", ".join(sources[:2]) + (f" +{len(sources)-2} more" if len(sources) > 2 else "")
+    )
+
+    async def event_stream():
+        yield f"data: {json.dumps({'type': 'meta', 'data': {'part': part, 'total_parts': total_parts, 'total_chunks': total_chunks, 'sources': sources, 'source_label': source_label}})}\n\n"
+
+        try:
+            async for token in generator.stream_summary(chunks_for_part, part, total_parts, source_label):
+                yield f"data: {json.dumps({'type': 'token', 'data': token})}\n\n"
+        except Exception as exc:
+            logger.exception("Summary LLM error for '%s' part %d", source_label, part)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(exc)})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'done', 'data': {'total_parts': total_parts}})}\n\n"
+
+    logger.info(
+        "Summarize '%s' — %d total chunks, part %d/%d (%d chunks)",
+        source_label, total_chunks, part, total_parts, len(chunks_for_part),
+    )
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/query")
